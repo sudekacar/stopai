@@ -1,0 +1,24 @@
+# Çalışma zamanı bağımlılıkları
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+
+# Veritabanı
+sqlalchemy[asyncio]>=2.0,<3.0
+aiosqlite>=0.20          # SQLite async sürücüsü
+asyncpg>=0.29            # PostgreSQL async sürücüsü (isteğe bağlı)
+alembic>=1.13            # şema göçleri
+
+# Ayarlar ve doğrulama
+pydantic>=2.8
+pydantic-settings>=2.4
+email-validator>=2.2     # pydantic EmailStr için
+
+# Güvenlik
+# Not: passlib 1.7.4 bcrypt 5.x ile çalışmıyor (arka uç tespitinde
+# 72 baytlık deneme hash'i ValueError fırlatıyor), bu yüzden bcrypt
+# doğrudan kullanılıyor. Bkz. app/core/security.py
+bcrypt>=4.1
+pyjwt>=2.9
+
+# Ollama istemcisi
+httpx>=0.27

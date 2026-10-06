@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+# Her async test için ayrı olay döngüsü; testler `@pytest.mark.asyncio`
+# yazmak zorunda kalmasın.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "S", "RUF"]
+ignore = [
+    "S101",  # assert: testlerde gerekli
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/*" = ["I001"]
+"tests/*" = ["S105", "S106"]  # testlerdeki sabit şifreler

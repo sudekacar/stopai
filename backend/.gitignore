@@ -1,0 +1,20 @@
+# Sanal ortam
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Ortam değişkenleri (gizli anahtarlar)
+.env
+.env.*
+!.env.example
+
+# Yerel veritabanı dosyaları
+*.sqlite3
+*.db
