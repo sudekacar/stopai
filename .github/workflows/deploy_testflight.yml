@@ -8,6 +8,7 @@
 #   APPLE_TEAM_ID                     Apple Developer Team ID (10 karakter)
 #   BUILD_CERTIFICATE_BASE64          Apple Distribution .p12 (base64)
 #   P12_PASSWORD                      .p12 parolası
+#   BUILD_PROVISION_PROFILE_BASE64    App Store .mobileprovision (base64)
 name: Deploy to TestFlight
 
 on:
@@ -62,33 +63,87 @@ jobs:
           p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
 
-      - name: Configure automatic signing
+      - name: Download App Store provisioning profile
+        id: profiles
+        continue-on-error: true
+        uses: apple-actions/download-provisioning-profiles@v1
+        with:
+          bundle-id: com.stopkoc.stopAiEhliyetKocu
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      - name: Install provisioning profile
         env:
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DOWNLOADED_PROFILES: ${{ steps.profiles.outputs.profiles }}
         run: |
+          set -euo pipefail
+
           if [ -z "$APPLE_TEAM_ID" ]; then
-            echo "APPLE_TEAM_ID secret is required for App Store automatic signing."
+            echo "APPLE_TEAM_ID secret is required."
             exit 1
           fi
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_NAME=""
+
+          if [ -n "${BUILD_PROVISION_PROFILE_BASE64:-}" ]; then
+            PP_PATH="$RUNNER_TEMP/app.mobileprovision"
+            echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+            PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+            security cms -D -i "$PP_PATH" > "$PROFILE_PLIST"
+            UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
+            PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")
+            cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision"
+            echo "Installed provisioning profile from secret: $PROFILE_NAME ($UUID)"
+          elif [ -n "${DOWNLOADED_PROFILES:-}" ] && [ "$DOWNLOADED_PROFILES" != "[]" ]; then
+            PROFILE_NAME=$(python3 -c 'import json,os; p=json.loads(os.environ.get("DOWNLOADED_PROFILES") or "[]"); print(p[0]["name"] if p else "")')
+            echo "Using downloaded App Store profile: $PROFILE_NAME"
+          else
+            echo "No App Store provisioning profile found."
+            echo "Add BUILD_PROVISION_PROFILE_BASE64 (base64 of the .mobileprovision)"
+            echo "or ensure an IOS_APP_STORE profile exists for com.stopkoc.stopAiEhliyetKocu."
+            exit 1
+          fi
+
+          if [ -z "$PROFILE_NAME" ]; then
+            echo "Provisioning profile name could not be resolved."
+            exit 1
+          fi
+
           /usr/libexec/PlistBuddy -c "Set :teamID $APPLE_TEAM_ID" ios/ExportOptions.plist
-          printf '\nDEVELOPMENT_TEAM=%s\nCODE_SIGN_STYLE=Automatic\n' "$APPLE_TEAM_ID" >> ios/Flutter/Release.xcconfig
+          /usr/libexec/PlistBuddy -c "Set :signingStyle manual" ios/ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Set :provisioningProfiles:com.stopkoc.stopAiEhliyetKocu $PROFILE_NAME" ios/ExportOptions.plist
+          printf '\nDEVELOPMENT_TEAM=%s\nCODE_SIGN_STYLE=Manual\nCODE_SIGN_IDENTITY=Apple Distribution\nPROVISIONING_PROFILE_SPECIFIER=%s\n' \
+            "$APPLE_TEAM_ID" "$PROFILE_NAME" >> ios/Flutter/Release.xcconfig
+
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
 
       - name: Build iOS IPA (release)
-        run: >
-          flutter build ipa --release
-          --dart-define=REVENUECAT_APPLE_API_KEY=${{ secrets.REVENUECAT_APPLE_API_KEY }}
-          --export-options-plist=ios/ExportOptions.plist
+        run: |
+          set -euo pipefail
+          echo "Building IPA with ExportOptions:"
+          cat ios/ExportOptions.plist
+          flutter build ipa --release \
+            --dart-define=REVENUECAT_APPLE_API_KEY=${{ secrets.REVENUECAT_APPLE_API_KEY }} \
+            --export-options-plist=ios/ExportOptions.plist
 
       - name: Resolve IPA path
         id: ipa
         run: |
+          set -euo pipefail
           IPA_PATH="$(find build/ios/ipa -name '*.ipa' -print | head -n 1)"
           if [ -z "$IPA_PATH" ]; then
-            echo "IPA not found under build/ios/ipa"
+            echo "IPA not found under build/ios/ipa — Flutter build probably failed before export."
             ls -la build/ios/ipa || true
+            ls -la build/ios || true
             exit 1
           fi
           echo "path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found IPA: $IPA_PATH"
 
       - name: Upload to TestFlight
         uses: apple-actions/upload-testflight-build@v1
