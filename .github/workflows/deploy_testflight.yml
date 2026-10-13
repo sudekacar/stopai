@@ -1,14 +1,14 @@
 # TestFlight'a iOS IPA yükler (macos-latest runner — yerel Mac gerekmez).
 #
 # GitHub Secrets:
-#   REVENUECAT_APPLE_API_KEY          RevenueCat iOS public SDK key
-#   APPSTORE_ISSUER_ID                App Store Connect API Issuer ID
-#   APPSTORE_API_KEY_ID               App Store Connect API Key ID
-#   APPSTORE_API_PRIVATE_KEY          AuthKey_*.p8 içeriği (PKCS8)
-#   APPLE_TEAM_ID                     Apple Developer Team ID (10 karakter)
-#   BUILD_CERTIFICATE_BASE64          Apple Distribution .p12 (base64)
-#   P12_PASSWORD                      .p12 parolası
-#   BUILD_PROVISION_PROFILE_BASE64    App Store .mobileprovision (base64)
+#   REVENUECAT_APPLE_API_KEY             RevenueCat iOS public SDK key
+#   APP_STORE_CONNECT_ISSUER_ID          App Store Connect API Issuer ID
+#   APP_STORE_CONNECT_API_KEY_ID         App Store Connect API Key ID
+#   APP_STORE_CONNECT_API_KEY_BASE64     AuthKey_*.p8 içeriği (base64)
+#   APPLE_TEAM_ID                        Apple Developer Team ID (10 karakter)
+#   BUILD_CERTIFICATE_BASE64             Apple Distribution .p12 (base64)
+#   P12_PASSWORD                         .p12 parolası
+#   BUILD_PROVISION_PROFILE_BASE64       App Store .mobileprovision (base64)
 name: Deploy to TestFlight
 
 on:
@@ -63,6 +63,48 @@ jobs:
           p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
 
+      - name: Prepare App Store Connect API key
+        id: asc
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
+            echo "APP_STORE_CONNECT_ISSUER_ID secret is empty."
+            exit 1
+          fi
+          if [ -z "$APP_STORE_CONNECT_API_KEY_ID" ]; then
+            echo "APP_STORE_CONNECT_API_KEY_ID secret is empty."
+            exit 1
+          fi
+          if [ -z "$APP_STORE_CONNECT_API_KEY_BASE64" ]; then
+            echo "APP_STORE_CONNECT_API_KEY_BASE64 secret is empty."
+            echo "Encode the .p8 with: base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy"
+            exit 1
+          fi
+
+          KEY_FILE="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          if printf '%s' "$APP_STORE_CONNECT_API_KEY_BASE64" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$APP_STORE_CONNECT_API_KEY_BASE64" > "$KEY_FILE"
+          else
+            printf '%s' "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_FILE"
+          fi
+
+          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_FILE"; then
+            echo "Decoded API key is not a valid PKCS8 .p8 private key."
+            exit 1
+          fi
+
+          {
+            echo "issuer_id=$APP_STORE_CONNECT_ISSUER_ID"
+            echo "api_key_id=$APP_STORE_CONNECT_API_KEY_ID"
+            echo "api_private_key<<EOF"
+            cat "$KEY_FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download App Store provisioning profile
         id: profiles
         continue-on-error: true
@@ -70,9 +112,9 @@ jobs:
         with:
           bundle-id: com.stopkoc.stopAiEhliyetKocu
           profile-type: IOS_APP_STORE
-          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
-          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
-          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          issuer-id: ${{ steps.asc.outputs.issuer_id }}
+          api-key-id: ${{ steps.asc.outputs.api_key_id }}
+          api-private-key: ${{ steps.asc.outputs.api_private_key }}
 
       - name: Install provisioning profile
         env:
@@ -150,6 +192,6 @@ jobs:
         with:
           app-path: ${{ steps.ipa.outputs.path }}
           app-type: ios
-          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
-          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
-          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          issuer-id: ${{ steps.asc.outputs.issuer_id }}
+          api-key-id: ${{ steps.asc.outputs.api_key_id }}
+          api-private-key: ${{ steps.asc.outputs.api_private_key }}
